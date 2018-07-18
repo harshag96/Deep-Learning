@@ -4,7 +4,8 @@ Created on Fri Jun  8 00:30:12 2018
 @author: HARSH
 
 This is a code for 'Feed Forward Neural Network' using Numpy.
-this network is used to classify images in two categories (CAT, NON CAT) without using any convolution layers."""
+this network is used to classify images in two categories (CAT, NON CAT) without using any convolution layers.
+"""
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,7 +13,6 @@ import h5py
 import scipy
 from PIL import Image
 from scipy import ndimage
-
 
 def load_dataset():
     train_dataset = h5py.File('train_catvnoncat.h5', "r")
@@ -31,6 +31,15 @@ def load_dataset():
     return train_set_x_orig, train_set_y_orig, test_set_x_orig, test_set_y_orig, classes
 
 
+def architecture(L,non):
+    w = []
+    b = []
+    for i in range(L):
+        w.append(np.random.rand(non[i+1],non[i]))
+        b.append(np.random.rand(non[i+1]).reshape((non[i+1],1)))
+    return w,b
+
+
 def sigmoid(z):
     return 1/(1+np.exp(-z))
 
@@ -46,152 +55,120 @@ def relu_derivative(z):
     return z
 
 
-def softmax(z):
-    z = np.exp(z)
-    t = np.sum(z)
-    return z/t
-
-
-def pad (X,p):
-    new_X = np.zeros((X.shape[0]+(2*p),X.shape[1]+(2*p),X.shape[2]))
-    new_X[p:X.shape[0]+p,p:X.shape[1]+p,:] = X
-    return new_X
-
-
-def architecture(layers,f,s,p,nof,shap):
-    w = []
-    b = []
-    for i,layer in enumerate(layers):
-        if(layer == 'conv'):
-            w.append(np.random.randn(nof[i],f[i],f[i],shap[2]))
-            b.append(np.nan)
-            shap[0] = int(np.floor((shap[0]+ 2*p[i] - f[i])/s[i]) + 1)
-            shap[1] = int(np.floor((shap[1]+ 2*p[i] - f[i])/s[i]) + 1)
-            shap[2] = nof[i]
-        elif(layer == 'fullyc'):
-            shap[0] = shap[0]*shap[1]*shap[2]
-            shap[1] = 1
-            shap[2] = 1
-            w.append(np.random.randn(f[i],int(shap[0])))
-            b.append(np.random.randn(f[i],1))
-            shap[0] = f[i]
+def forward_propagate(X,w,b,L):
+    a = []
+    z = []
+    a.append(X)
+    z.append(X)
+    for i in range(L):
+        #print(a[-1].shape,w[i].shape,b[i].shape)
+        z.append(np.dot(a[-1] , w[i].T) + b[i].T)
+        if(i != L-1):
+            a.append(ReLU(z[-1]))
         else:
-            shap[0] = int(np.floor((shap[0]+ 2*p[i] - f[i])/s[i]) + 1)
-            shap[1] = int(np.floor((shap[1]+ 2*p[i] - f[i])/s[i]) + 1)
-            b.append(np.nan)
-            w.append(np.nan)
-    params = {"w" : w,
-              "b" : b}
-    return params
-            
+            a.append(sigmoid(z[-1]))
+    return a,z
 
 
-def conv(X,F,p,s):
-    if(p!=0):
-        X = pad(X,p)
+def back_propagation(a,z,w,b,L,y):
+    m = y.shape[0]
+    da = []
+    dw = []
+    dz = []
+    db = []
+    #print(a)
+    #cost = (-1/m)*np.sum(y*np.log(a[-1]) + (1-y)*np.log(1-a[-1]))
+    cost = (1/m)*(np.sum(np.square(y-a[-1])))
     
-    itr = int(np.floor((X.shape[0]-F.shape[0])/s)+1)
-    jtr = int(np.floor((X.shape[1]-F.shape[1])/s)+1)
-    res = np.random.rand(itr,jtr)
-    for i in range(itr):
-        for j in range(jtr):
-            spt1 = i*s
-            spt2 = j*s
-            res[i,j] = np.sum(X[spt1:spt1+F.shape[0],spt2:spt2+F.shape[1],:]*F)
+    dz.append(a[-1] - y)
+    dw.append(np.dot(dz[-1].T,a[L-1]))
+    db.append(np.sum(dz[-1],axis = 0).T.reshape((dz[-1].shape[1],1)))
     
-    return res
+    for i in range(L-1):
+        da.append(np.dot(dz[-1],w[L-1-i]))
+        dz.append(da[-1]*relu_derivative(z[L-1-i]))
+        dw.append(np.dot(dz[-1].T , a[L-2-i]))
+        db.append(np.sum(dz[-1],axis = 0).T.reshape((dz[-1].shape[1],1)))
+    
+    grads = {"dw" : dw,
+             "db" : db}
+    return cost,grads
 
 
-def maxpool(X,f,p,s):
-    if(p!=0):
-        X = pad(X,p)
+def update(w,b,grad,L,l_rate,m,lambd):
     
-    itr = int(np.floor((X.shape[0]-f/s)+1))
-    jtr = int(np.floor((X.shape[1]-f)/s)+1)
-    res = np.random.rand(itr,jtr,X.shape[2])
-    for i in range(itr):
-        for j in range(jtr):
-            spt1 = i*s
-            spt2 = j*s
-            res[i,j,:] = np.max(np.max(X[spt1:spt1+f,spt2:spt2+f,:],axis=0),axis=0)
+    dw = grad["dw"]
+    db = grad["db"]
     
-    return res
+    for i in range(L):
+        w[i] = w[i] - l_rate*((dw[L-1-i] + (lambd*w[i]))/m)
+        b[i] = b[i] - l_rate*((db[L-1-i] + (lambd*b[i]))/m)
+    
+    return w,b
 
 
-def fullyc(X,w,b,act):
-    z = np.dot(w,X) + b
-    if(act == "sigmoid"):
-        z = sigmoid(z)
-    elif(act == "softmax"):
-        z = softmax(z)
-    else:
-        z = ReLU(z)
-    return z
+def predict(X,w,b,L):
+    a,z = forward_propagate(X,w,b,L)
+    pred = a[-1]
+    pred[pred>0.49] = 1
+    pred[pred != 1] = 0
+    return pred
 
 
-def propagate(X,layers,f,s,p,params):
-    w = params["w"]
-    b = params["b"]
-    a = [X]
-    shap = list(X.shape)
-    
-    for i,layer in enumerate(layers):
-        if(layer == 'conv'):
-            shap[0] = int(np.floor((shap[0]+ 2*p[i] - f[i])/s[i]) + 1)
-            shap[1] = int(np.floor((shap[1]+ 2*p[i] - f[i])/s[i]) + 1)
-            shap[2] = nof[i]
-            res = np.random.rand(shap[0],shap[1],shap[2])
-            for j in range(nof[i]):
-                res[:,:,j] = conv(X,w[i][j],p[i],s[i])
-            a.append(res)
-        
-        elif(layer == 'fullyc'):
-            X = X.reshape((-1,1))
-            a.append(fullyc(X,w[i],b[i],'ReLU'))
-            shap = list(a[-1].shape)
-        else:
-            shap[0] = int(np.floor((shap[0]+ 2*p[i] - f[i])/s[i]) + 1)
-            shap[1] = int(np.floor((shap[1]+ 2*p[i] - f[i])/s[i]) + 1)
-            a.append(maxpool(X,f[i],p[i],s[i]))
-        X = a[-1]
-    return a
-    
-    
-def grad_descent(X_train,y_train,params,layers,f,s,p,nof,l_rate,lambd,n_iter):
+def gradient_desc(X,y,w,b,l_rate,n_iter,L,lambd):
+    m = y.shape[0]
     costs = []
+    grads = []
     for i in range(n_iter):
-        for j in range(10,11):#X_train.shape[0]
-            X = X_train[j]
-            X = X/np.linalg.norm(X)
-            a = propagate(X,layers,f,s,p,params)
-    return a,costs        
-            
-    
-    
-    
-    
-#Main code
+        a,z = forward_propagate(X,w,b,L)
+        cost,grad = back_propagation(a,z,w,b,L,y)
+        w,b = update(w,b,grad,L,l_rate,m,lambd)
+        costs.append(cost)
+        grads.append(grad["dw"][-1][-1])
+        if(i%100 == 0):
+            print(i,"th iteration cost: ",cost)
+    return w,b,costs,grads,a
 
 # Loading the data (cat/non-cat)
-X_train, y_train, X_test, y_test, classes = load_dataset()
+train_set_x_orig, train_set_y, test_set_x_orig, test_set_y, classes = load_dataset()
 
-#Shape of input image
-shap = list(X_train[0].shape)
-#Defining architecture
-layers = ['conv','maxpool','fullyc','fullyc']
-#Filter size
-f = [3,3,100,1]
-#Stride
-s = [1,1,1,1]
-#Padding
-p = [0,0,0,0]
-#Number of filters
-nof = [6,0,0,0]
-#Initializing parameters
-params = architecture(layers,f,s,p,nof,shap)
+m_train = train_set_x_orig.shape[0]
+m_test = test_set_x_orig.shape[0]
+num_px = train_set_x_orig.shape[1]
 
-#Hyperparameters
-n_iter = 1
-l_rate = 0.01
-lambd = 0.0
-a,cost = grad_descent(X_train,y_train,params,layers,f,s,p,nof,l_rate,lambd,n_iter)
+train_set_x_flatten = train_set_x_orig.reshape(m_train,-1)
+test_set_x_flatten = test_set_x_orig.reshape(m_test,-1)
+X_train = train_set_x_flatten/255.
+X_test = test_set_x_flatten/255.
+y_train = train_set_y.reshape((m_train,1))
+y_test = test_set_y.reshape((m_test,1))
+ 
+#Optimized hyperparameters for single layer
+#l_rate = [0.01]
+#lambd = [0.3]
+#L = 1
+#n_iter = 5000
+#non = [X_train.shape[1],1]
+
+#l_rate = [0.001,0.003,0.01,0.03,0.1]
+#lambd = [0.01,0.03,0.1,0.3,1,3,10,30]
+
+l_rate = [0.03]
+lambd = [1]
+n_iter = 3000
+L = 2
+non = [X_train.shape[1],10,1]
+
+for i in l_rate:
+    for j in lambd:
+        w,b = architecture(L,non)
+        w,b,costs,grads,a = gradient_desc(X_train,y_train,w,b,i,n_iter,L,j)
+        y_pred = predict(X_test,w,b,L)
+        acc = 100 - np.mean(np.abs(y_pred - y_test))*100
+        y_pred = predict(X_train,w,b,L)
+        acc1 = 100 - np.mean(np.abs(y_pred - y_train))*100
+        print("l_rate = ",i," lambd = ",j," accuracy = ",acc, " train acc = ",acc1)
+plt.plot(costs)
+plt.show()
+#Images are shown using below command
+#plt.imshow(test_set_x_orig[0])
